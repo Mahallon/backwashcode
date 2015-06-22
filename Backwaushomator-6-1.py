@@ -1,6 +1,7 @@
 import RPi.GPIO as GPIO
 from time import sleep
 from Tkinter import *
+import thread
 import math
 import time
 import numpy as np
@@ -8,14 +9,11 @@ import spidev
 from datetime import datetime, timedelta
 import sys
 
-#this is a test web edit
-
 #To Do
 #       eventually a particle counter lable 
 ## look into SSH remot control/screen sharing
 ## backwash time determined by flow past a certian point
 ## see if Graph can scroll with time rather than a set window
-## prompt to save data
 ## make target data defineable in the program
 ## add in pressure drop over the solenoids
 ## Emergency shutoff needs to pass in an argument or else it doesn't work
@@ -23,7 +21,7 @@ import sys
 #----------------------------------------------------------------------------------------------------------------------
                                                                                                                                                                                                                          
 
-print("start")
+#print("start")
 #Setting up Spi to read ADC
 spi_0 = spidev.SpiDev()
 spi_0.open(0, 0)  #the second number indicates which SPI pin CE0 or CE1
@@ -39,13 +37,14 @@ BackwashPumpTarget=45
 BackwashFlowCount = 0.0
 oldBackwashFlowCount= 0.0
 backwashflow = 0.0
-FlowTarget = 1.0
-PumpThreshold = 1
+FlowTarget = 1.0 #lpm
+PumpThreshold = 1 #psi
 StartTime = datetime.now()
 samplePeriod = 100  #milliseconds, time between data points written to txt file
-minimumtime = 1000
-destination = "/home/pi/Desktop/Data/AutosavedData.txt"
+minimumtime = 1000  #Time in miliseconds between possible backwash cycles
+destination = "/home/pi/Desktop/Data/AutosavedData %s.txt" %str(StartTime)
 a=open(destination,'w') #a means append to existing file, w means overwrite old data
+#add column headers for perameters and data
 a.write("\n\n"+ str(datetime.now())+","+str(ForwardPumpTarget)+","+str(BackwashPumpTarget)+","+str(FlowTarget)+","+str(PumpThreshold))
 backwash = False
 switched = False
@@ -75,12 +74,16 @@ class popupWindow(object):
 class mainWindow(object):
     def __init__(self,master):
         self.master=master
-        self.b=Button(master,text="Click Here",command=self.popup)
-        self.b.pack()
-        self.b2=Button(master,text="Update Flow Target",command=lambda: FTdisplay.set((str(self.entryValue()))))
-        self.b2.pack()
-        self.b3=Button(master,text="Update Pump Threshold",command=lambda: PTdisplay.set((str(self.entryValue()))))
-        self.b3.pack()
+        self.b=Button(Controls,text="Set Value",command=self.popup,)
+        self.b.place(x=0,y=203)
+        self.b2=Button(Controls,text="Update Flow Target",command=lambda: FTdisplay.set((str(self.entryValue()))))
+        self.b2.place(x=85,y=223)
+        self.b3=Button(Controls,text="Update Pump Threshold",command=lambda: PTdisplay.set((str(self.entryValue()))))
+        self.b3.place(x=225,y=223)
+        self.b4=Button(Controls,text="Update Forward Target",command=lambda: FPTdisplay.set((str(self.entryValue()))))
+        self.b4.place(x=85,y=193)
+        self.b5=Button(Controls,text="Update Backwash Target",command=lambda: BPdisplay.set((str(self.entryValue()))))
+        self.b5.place(x=225,y=193)
 
 
     def popup(self):
@@ -92,6 +95,7 @@ class mainWindow(object):
 
 
 root = Tk()
+root.geometry('880x700+150+150')
 root.title("Backwash Control")
 
 #----initializing GUI------------------
@@ -153,21 +157,35 @@ frame.pack(anchor=NW)
 
 
 #----Threshold set up-----------------
+Controls= LabelFrame(root,text='Controls',height=270,width=w-450)
+Controls.pack_propagate(False)
+Controls.place(x=0,y=0)
+
 FTdisplay = StringVar()
 FTdisplay.set((str(FlowTarget)))
-FTlabel = Label(frame, textvariable=FTdisplay)
+FTlabel = Label(Controls, textvariable=FTdisplay)
 FTlabel.pack()
 
 
 PTdisplay = StringVar()
 PTdisplay.set((str(PumpThreshold)))
-Plabel = Label(frame, textvariable=PTdisplay)
+Plabel = Label(Controls, textvariable=PTdisplay)
 Plabel.pack()
+
+FPTdisplay = StringVar()
+FPTdisplay.set((str(ForwardPumpTarget)))
+Flabel = Label(Controls, textvariable=FPTdisplay)
+Flabel.pack()
+
+BPdisplay = StringVar()
+BPdisplay.set((str(BackwashPumpTarget)))
+Blabel = Label(Controls, textvariable=BPdisplay)
+Blabel.pack()
 
 #----Manual control switchs----------------
 Switch=StringVar()
 Switch.set('Forward')
-ManualSwitch = Checkbutton(frame,indicatoron=0,textvariable=Switch)
+ManualSwitch = Checkbutton(Controls,indicatoron=0,textvariable=Switch)
 ManualSwitch.pack()
 ##Switch2=StringVar()
 ##Switch2.set('Liters')
@@ -213,7 +231,8 @@ def coordinate():
 #---End initiation of lists
 
 Graph= LabelFrame(root, text="Flow Graph",height=250,width=screenWidth)
-Graph.pack()
+Graph.place(x=(w-screenWidth)+2,y=0)
+
 GraphC=Canvas(Graph, bg = "gray", height = 249, width = screenWidth-1)
 c0 = GraphC.create_rectangle(0,0,20,50)
 cl0 = GraphC.create_line(xy0Coords,smooth=True)
@@ -307,7 +326,7 @@ def move_time():
     c0 = GraphC.create_rectangle(0,0,20,int(backwashflow/1023*250))
     shiftCoords(249-(flowshow*12))
     cl0 = GraphC.create_line(xy0Coords)
-    ctar = GraphC.create_line(0,(249-float(FTdisplay.get())*20),450,(249-float(FTdisplay.get())*20), fill='red')
+    ctar = GraphC.create_line(0,(249-float(FTdisplay.get())*12),450,(249-float(FTdisplay.get())*12), fill='red')
     #print(float(readadc_0(0))/1023*250)
     #title="V= " , str(round(3.3*float(readadc_0(2)-readadc_0(0))/1023,2)) , str(round(3.3*float(readadc_0(2))/1023,2)), str(round(3.3*float(readadc_0(0))/1023,2))
     #root.title(title)
@@ -323,11 +342,29 @@ def checkback():
             CY.set(str(cycles))
         switched  = False
         
-    if flowshow < float(FTdisplay.get()) and flowshow > .1 and BPshow > 40: 
+    if flowshow < float(FTdisplay.get()) and BPshow > 40: #and flowshow > .1
         backwash = True
         Switch.set('Backwash')
         switched = True
     root.after(minimumtime,checkback)
+
+def SwitchB(delay):
+    print 'start backwash'
+    GPIO.output(ForwardPumpValve,vclose)
+    GPIO.output(BackwashTankValve, vclose)
+    time.sleep(delay)   # try time delay to see if blip will go away 
+    GPIO.output(ForwardTankValve,vopen)
+    GPIO.output(BackwashPumpValve, vopen)
+    print 'end backwash'
+
+def SwitchF(delay):
+    print 'start forward'
+    GPIO.output(ForwardTankValve,vclose)
+    GPIO.output(BackwashPumpValve, vclose)
+    time.sleep(delay)
+    GPIO.output(BackwashTankValve, vopen)
+    GPIO.output(ForwardPumpValve,vopen)
+    print 'end forward'
         
 def writeData(): 
     global destination,cycles,Diffshow,switched,samplePeriod,ForwardFlowCount,oldForwardFlowCount,BackwashFlowCount,oldBackwashFlowCount,forwardflow,backwashflow,FlowrateAvg,flowshow
@@ -357,7 +394,7 @@ def writeData():
 
     if BackwashPumpActual > 55 or ForwardPumpActual > 55:
         print 'EMERGENCY SHUT OFF: Pressure too high!'
-        callback_end()
+        callback_end("<End>")
 
     Reading = (3.3*float(readadc_0(2)-readadc_0(0))/1023)*100
     DifferentialPressure=round(Reading-(-1.06+.1007*Reading),1)
@@ -376,16 +413,13 @@ def writeData():
 ##        ConversionFactor2 = 3800 # pulses per gallon
  
     if backwash:
-        GPIO.output(ForwardPumpValve,vclose)
-        GPIO.output(BackwashTankValve, vclose)
-        GPIO.output(ForwardTankValve,vopen)
-        GPIO.output(BackwashPumpValve, vopen)
+        if switched == True:
+            thread.start_new_thread(SwitchB,(.5,))
 
     else:
-        GPIO.output(ForwardTankValve,vclose)
-        GPIO.output(BackwashPumpValve, vclose)
-        GPIO.output(BackwashTankValve, vopen)
-        GPIO.output(ForwardPumpValve,vopen)
+        if switched == False:
+            thread.start_new_thread(SwitchF,(.5,))
+       
         
 
         
@@ -401,8 +435,9 @@ def writeData():
     BFL.set(str(round(backwashflow,1)))
     CL.set(str(round(BackwashFlowCount/1000,1)))
     FL.set(str(round(ForwardFlowCount/1000,1)))
-    data = str(round(Diffshow,1)) + "\t" + str(round(flowshow,1)) + "\t" +str(round(backwashflow,1)) + "\t" +str(round(FPshow,1))+ "\t" +str(round(BPshow,1))+'\t'+str(cycles)+'\t'+str(backwash) 
-    a.write("\n"+ str(datetime.now()) + ", " + str(data))
+    #data = str(round(Diffshow,1)) + "\t" + str(round(flowshow,1)) + "\t" +str(round(backwashflow,1)) + "\t" +str(round(FPshow,1))+ "\t" +str(round(BPshow,1))+'\t'+str(cycles)+'\t'+str(backwash)#Writing averaged data
+    data = str(round(Diffshow,1)) + "\t" + str(round(forwardflow,1)) + "\t" +str(round(backwashflow,1)) + "\t" +str(round(ForwardPumpActual,1))+ "\t" +str(round(BackwashPumpActual,1))+'\t'+str(cycles)+'\t'+str(backwash) # writng actual data
+    a.write("\n"+ str(datetime.now()) + "\t" + str(data))
     oldForwardFlowCount=ForwardFlowCount
     oldBackwashFlowCount=BackwashFlowCount
     root.after(samplePeriod,writeData)
@@ -432,7 +467,7 @@ GPIO.add_event_detect(BackwashFlow, GPIO.RISING, callback=callback_bflow)
 
 
 C.bind("<End>",callback_end)
-C.pack()
+C.place(x=10,y=280)
 GraphC.pack(anchor=CENTER)
 root.after(baseTime,move_time)
 root.after(samplePeriod,writeData)
